@@ -95,6 +95,7 @@ export default function App() {
   const [mode, setMode] = useState<'select' | 'move' | 'draw-room' | 'draw-wall' | 'place-object' | 'measure-line' | 'measure-rect' | 'add-text'>('select');
   const [viewLocked, setViewLocked] = useState(false);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+  const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
   const [selectedLabelId, setSelectedLabelId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [zoom, setZoom] = useState(1);
@@ -373,6 +374,15 @@ export default function App() {
   };
 
   const handleCanvasClick = (e: any) => {
+    // If clicking on an object/wall, don't clear selection
+    if (e.target !== e.target.getStage()) {
+      return;
+    }
+    
+    setSelectedObjectId(null);
+    setSelectedWallId(null);
+    setSelectedLabelId(null);
+
     const stage = e.target.getStage();
     const pointer = stage.getRelativePointerPosition();
     let { x: gridX, y: gridY } = findSnapTarget(pointer.x / PIXELS_PER_FOOT, pointer.y / PIXELS_PER_FOOT);
@@ -764,6 +774,15 @@ export default function App() {
     if (selectedObjectId) {
       handleDeleteObject(selectedObjectId);
       setSelectedObjectId(null);
+    } else if (selectedWallId) {
+      handleDeleteWall(selectedWallId);
+      setSelectedWallId(null);
+    } else if (selectedLabelId) {
+      setRooms(rooms.map(r => r.id === activeRoomId ? {
+        ...r,
+        labels: r.labels?.filter(l => l.id !== selectedLabelId)
+      } : r));
+      setSelectedLabelId(null);
     }
   };
 
@@ -1046,7 +1065,7 @@ export default function App() {
             </button>
             <button 
               onClick={handleDeleteSelected} 
-              disabled={!selectedObjectId}
+              disabled={!selectedObjectId && !selectedWallId && !selectedLabelId}
               className="p-2 hover:bg-red-50 rounded-xl text-zinc-500 hover:text-red-600 disabled:opacity-30"
               title="Delete Selected"
             >
@@ -1406,6 +1425,12 @@ export default function App() {
                   onDelete={() => handleDeleteWall(wall.id)}
                   onHover={() => setHoveredWall({ start: wall.start, end: wall.end })}
                   onUnhover={() => setHoveredWall(null)}
+                  isSelected={selectedWallId === wall.id}
+                  onSelect={() => {
+                    setSelectedWallId(wall.id);
+                    setSelectedObjectId(null);
+                    setSelectedLabelId(null);
+                  }}
                 />
               ))}
 
@@ -1518,7 +1543,11 @@ export default function App() {
                     onRotate={() => handleRotate(obj.id)}
                     onDelete={() => handleDeleteObject(obj.id)}
                     isSelected={selectedObjectId === obj.id}
-                    onSelect={() => setSelectedObjectId(obj.id)}
+                    onSelect={() => {
+                      setSelectedObjectId(obj.id);
+                      setSelectedWallId(null);
+                      setSelectedLabelId(null);
+                    }}
                     isValid={isValidPlacement(obj, activeRoom)}
                   />
                 );
@@ -1540,6 +1569,7 @@ export default function App() {
                   onSelect={() => {
                     setSelectedLabelId(label.id);
                     setSelectedObjectId(null);
+                    setSelectedWallId(null);
                   }}
                   onDelete={() => {
                     setRooms(rooms.map(r => r.id === activeRoomId ? {
@@ -1982,7 +2012,9 @@ function WallOnCanvas({
   onDragEnd, 
   onDelete,
   onHover,
-  onUnhover
+  onUnhover,
+  isSelected,
+  onSelect
 }: { 
   wall: TempWall, 
   zoom: number, 
@@ -1990,7 +2022,9 @@ function WallOnCanvas({
   onDragEnd: (e: any) => void, 
   onDelete: () => void,
   onHover: () => void,
-  onUnhover: () => void
+  onUnhover: () => void,
+  isSelected?: boolean,
+  onSelect?: () => void
 }) {
   const isMoveMode = mode === 'move';
   const dx = (wall.end.x - wall.start.x) * PIXELS_PER_FOOT;
@@ -2004,26 +2038,32 @@ function WallOnCanvas({
       onDragEnd={onDragEnd}
       onMouseEnter={onHover}
       onMouseLeave={onUnhover}
+      onClick={(e) => {
+        e.cancelBubble = true;
+        onSelect?.();
+      }}
     >
       <Line
         points={[0, 0, dx, dy]}
-        stroke={wall.color || "#64748b"}
-        strokeWidth={4 / zoom}
+        stroke={isSelected ? "#4f46e5" : (wall.color || "#64748b")}
+        strokeWidth={(isSelected ? 6 : 4) / zoom}
         hitStrokeWidth={20 / zoom}
         dash={wall.isDashed ? [5, 5] : undefined}
+        shadowBlur={isSelected ? 10 : 0}
+        shadowColor="#4f46e5"
       />
       <Circle 
         x={0} 
         y={0} 
         radius={4 / zoom} 
-        fill="#94a3b8"
+        fill={isSelected ? "#4f46e5" : "#94a3b8"}
         onClick={onDelete}
       />
       <Circle 
         x={dx} 
         y={dy} 
         radius={4 / zoom} 
-        fill="#94a3b8"
+        fill={isSelected ? "#4f46e5" : "#94a3b8"}
         onClick={onDelete}
       />
     </Group>
