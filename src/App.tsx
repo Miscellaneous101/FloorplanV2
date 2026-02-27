@@ -126,6 +126,7 @@ export default function App() {
   const [drawingPoints, setDrawingPoints] = useState<Point[]>([]);
   const [tempWallStart, setTempWallStart] = useState<Point | null>(null);
   const [measureStart, setMeasureStart] = useState<Point | null>(null);
+  const [measureEnd, setMeasureEnd] = useState<Point | null>(null);
   const [draggedObject, setDraggedObject] = useState<ObjectDefinition | null>(null);
   const [mousePos, setMousePos] = useState<Point>({ x: 0, y: 0 });
   const [hoveredWall, setHoveredWall] = useState<{ start: Point, end: Point } | null>(null);
@@ -184,6 +185,13 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify({ rooms, library: objectLibrary }));
   }, [rooms, objectLibrary]);
+
+  useEffect(() => {
+    if (mode !== 'measure-line' && mode !== 'measure-rect') {
+      setMeasureStart(null);
+      setMeasureEnd(null);
+    }
+  }, [mode]);
 
   const handleCreateRoom = () => {
     const newRoom: Room = {
@@ -374,6 +382,21 @@ export default function App() {
   };
 
   const handleCanvasClick = (e: any) => {
+    const stage = e.target.getStage();
+    const pointer = stage.getRelativePointerPosition();
+    let { x: gridX, y: gridY } = findSnapTarget(pointer.x / PIXELS_PER_FOOT, pointer.y / PIXELS_PER_FOOT);
+
+    // Handle measurement tools first so they work even when clicking on objects/walls
+    if (mode === 'measure-line' || mode === 'measure-rect') {
+      if (!measureStart || (measureStart && measureEnd)) {
+        setMeasureStart({ x: gridX, y: gridY });
+        setMeasureEnd(null);
+      } else {
+        setMeasureEnd({ x: gridX, y: gridY });
+      }
+      return; // Exit early for measurement modes
+    }
+
     // If clicking on an object/wall, don't clear selection
     if (e.target !== e.target.getStage()) {
       return;
@@ -382,10 +405,6 @@ export default function App() {
     setSelectedObjectId(null);
     setSelectedWallId(null);
     setSelectedLabelId(null);
-
-    const stage = e.target.getStage();
-    const pointer = stage.getRelativePointerPosition();
-    let { x: gridX, y: gridY } = findSnapTarget(pointer.x / PIXELS_PER_FOOT, pointer.y / PIXELS_PER_FOOT);
 
     if (mode === 'draw-room') {
       // Enforce horizontal/vertical alignment
@@ -445,12 +464,6 @@ export default function App() {
           setRooms(rooms.map(r => r.id === activeRoomId ? { ...r, tempWalls: [...r.tempWalls, newWall] } : r));
         }
         setTempWallStart(null);
-      }
-    } else if (mode === 'measure-line' || mode === 'measure-rect') {
-      if (!measureStart) {
-        setMeasureStart({ x: gridX, y: gridY });
-      } else {
-        setMeasureStart(null);
       }
     } else if (mode === 'add-text') {
       setPendingTextPos({ x: gridX, y: gridY });
@@ -1074,7 +1087,7 @@ export default function App() {
 
             <div className="w-px h-6 bg-zinc-200 mx-1" />
             <div className="flex items-center gap-2 px-3">
-              <button onClick={() => setZoom(z => Math.max(0.1, z - 0.1))} className="p-1 hover:bg-zinc-100 rounded">-</button>
+              <button onClick={() => setZoom(z => Math.max(0.05, z - 0.1))} className="p-1 hover:bg-zinc-100 rounded">-</button>
               <span className="text-[10px] font-mono w-10 text-center">{Math.round(zoom * 100)}%</span>
               <button onClick={() => setZoom(z => Math.min(5, z + 0.1))} className="p-1 hover:bg-zinc-100 rounded">+</button>
             </div>
@@ -1331,10 +1344,11 @@ export default function App() {
               };
 
               const newScale = e.evt.deltaY > 0 ? oldScale / scaleBy : oldScale * scaleBy;
-              setZoom(newScale);
+              const clampedScale = Math.max(0.05, Math.min(5, newScale));
+              setZoom(clampedScale);
               setStagePos({
-                x: pointer.x - mousePointTo.x * newScale,
-                y: pointer.y - mousePointTo.y * newScale,
+                x: pointer.x - mousePointTo.x * clampedScale,
+                y: pointer.y - mousePointTo.y * clampedScale,
               });
             }}
             onClick={handleCanvasClick}
@@ -1458,17 +1472,17 @@ export default function App() {
                     points={[
                       measureStart.x * PIXELS_PER_FOOT,
                       measureStart.y * PIXELS_PER_FOOT,
-                      mousePos.x * PIXELS_PER_FOOT,
-                      mousePos.y * PIXELS_PER_FOOT
+                      (measureEnd || mousePos).x * PIXELS_PER_FOOT,
+                      (measureEnd || mousePos).y * PIXELS_PER_FOOT
                     ]}
                     stroke="#10b981"
                     strokeWidth={2 / zoom}
                     dash={[5, 5]}
                   />
                   <Text
-                    text={formatFeetInches(Math.sqrt(Math.pow(mousePos.x - measureStart.x, 2) + Math.pow(mousePos.y - measureStart.y, 2)))}
-                    x={(measureStart.x + mousePos.x) / 2 * PIXELS_PER_FOOT}
-                    y={(measureStart.y + mousePos.y) / 2 * PIXELS_PER_FOOT - 25 / zoom}
+                    text={formatFeetInches(Math.sqrt(Math.pow((measureEnd || mousePos).x - measureStart.x, 2) + Math.pow((measureEnd || mousePos).y - measureStart.y, 2)))}
+                    x={(measureStart.x + (measureEnd || mousePos).x) / 2 * PIXELS_PER_FOOT}
+                    y={(measureStart.y + (measureEnd || mousePos).y) / 2 * PIXELS_PER_FOOT - 25 / zoom}
                     fontSize={16 / zoom}
                     fill="#059669"
                     fontFamily="JetBrains Mono"
@@ -1481,18 +1495,19 @@ export default function App() {
               {mode === 'measure-rect' && measureStart && (
                 <Group>
                   <Rect
-                    x={Math.min(measureStart.x, mousePos.x) * PIXELS_PER_FOOT}
-                    y={Math.min(measureStart.y, mousePos.y) * PIXELS_PER_FOOT}
-                    width={Math.abs(mousePos.x - measureStart.x) * PIXELS_PER_FOOT}
-                    height={Math.abs(mousePos.y - measureStart.y) * PIXELS_PER_FOOT}
+                    x={Math.min(measureStart.x, (measureEnd || mousePos).x) * PIXELS_PER_FOOT}
+                    y={Math.min(measureStart.y, (measureEnd || mousePos).y) * PIXELS_PER_FOOT}
+                    width={Math.abs((measureEnd || mousePos).x - measureStart.x) * PIXELS_PER_FOOT}
+                    height={Math.abs((measureEnd || mousePos).y - measureStart.y) * PIXELS_PER_FOOT}
                     stroke="#10b981"
                     strokeWidth={2 / zoom}
                     fill="#10b98110"
                     dash={[5, 5]}
                   />
                   {(() => {
-                    const w = Math.abs(mousePos.x - measureStart.x);
-                    const h = Math.abs(mousePos.y - measureStart.y);
+                    const currentEnd = measureEnd || mousePos;
+                    const w = Math.abs(currentEnd.x - measureStart.x);
+                    const h = Math.abs(currentEnd.y - measureStart.y);
                     const area = w * h;
                     
                     // Pallet calculation: 48"x40" (4' x 3.333')
@@ -1502,24 +1517,37 @@ export default function App() {
                     const fit1 = Math.floor(w / palletW) * Math.floor(h / palletH);
                     const fit2 = Math.floor(w / palletH) * Math.floor(h / palletW);
                     const maxPallets = Math.max(fit1, fit2);
+                    
+                    // Maneuverable estimate: approx 65% utilization for aisles/walking
+                    const estPallets = Math.floor(maxPallets * 0.65);
+
+                    const rectX = Math.min(measureStart.x, currentEnd.x) * PIXELS_PER_FOOT;
+                    const rectY = Math.min(measureStart.y, currentEnd.y) * PIXELS_PER_FOOT;
+                    const rectW = w * PIXELS_PER_FOOT;
+                    const rectH = h * PIXELS_PER_FOOT;
 
                     return (
                       <Group
-                        x={Math.min(measureStart.x, mousePos.x) * PIXELS_PER_FOOT}
-                        y={Math.min(measureStart.y, mousePos.y) * PIXELS_PER_FOOT - 40 / zoom}
+                        x={rectX + rectW / 2}
+                        y={rectY + rectH / 2}
+                        offsetX={90 / zoom}
+                        offsetY={35 / zoom}
                       >
                         <Rect
-                          width={140 / zoom}
-                          height={35 / zoom}
+                          width={180 / zoom}
+                          height={70 / zoom}
                           fill="#1e293b"
-                          cornerRadius={4 / zoom}
+                          cornerRadius={6 / zoom}
+                          opacity={0.9}
                         />
                         <Text
-                          text={`${formatFeetInches(w)} x ${formatFeetInches(h)}\nArea: ${Math.round(area)} sq ft\nPallets (48x40): ${maxPallets}`}
-                          padding={5 / zoom}
-                          fontSize={12 / zoom}
+                          text={`${formatFeetInches(w)} x ${formatFeetInches(h)}\nArea: ${Math.round(area)} sq ft\nMax Pallets: ${maxPallets}\nEst. (w/ Walkway): ${estPallets}`}
+                          padding={8 / zoom}
+                          fontSize={11 / zoom}
                           fill="white"
                           fontFamily="JetBrains Mono"
+                          align="center"
+                          width={180 / zoom}
                         />
                       </Group>
                     );
