@@ -202,6 +202,23 @@ export default function App() {
     }
   }, [mode]);
 
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+        
+        if (selectedObjectIds.length > 0) {
+          handleDeleteSelected();
+        } else if (selectedObjectId) {
+          handleDeleteObject(selectedObjectId);
+          setSelectedObjectId(null);
+        }
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedObjectIds, selectedObjectId, activeRoomId, rooms]);
+
   const handleCreateRoom = () => {
     const newRoom: Room = {
       id: Math.random().toString(36).substr(2, 9),
@@ -881,7 +898,14 @@ export default function App() {
 
   const handleDeleteSelected = () => {
     if (!activeRoom) return;
-    if (selectedObjectId) {
+    
+    if (selectedObjectIds.length > 0) {
+      setRooms(rooms.map(r => r.id === activeRoomId ? { 
+        ...r, 
+        objects: r.objects.filter(o => !selectedObjectIds.includes(o.id)) 
+      } : r));
+      setSelectedObjectIds([]);
+    } else if (selectedObjectId) {
       handleDeleteObject(selectedObjectId);
       setSelectedObjectId(null);
     } else if (selectedWallId) {
@@ -1181,7 +1205,7 @@ export default function App() {
             </button>
             <button 
               onClick={handleDeleteSelected} 
-              disabled={!selectedObjectId && !selectedWallId && !selectedLabelId}
+              disabled={!selectedObjectId && !selectedWallId && !selectedLabelId && selectedObjectIds.length === 0}
               className="p-2 hover:bg-red-50 rounded-xl text-zinc-500 hover:text-red-600 disabled:opacity-30"
               title="Delete Selected"
             >
@@ -1401,6 +1425,28 @@ export default function App() {
                   </div>
                 </div>
               </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        {/* Selection Actions */}
+        <AnimatePresence>
+          {selectedObjectIds.length > 0 && (
+            <motion.div 
+              initial={{ y: -20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -20, opacity: 0 }}
+              className="absolute top-20 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 p-2 bg-white/90 backdrop-blur-md border border-zinc-200 shadow-xl rounded-2xl"
+            >
+              <span className="text-xs font-bold px-2 text-zinc-500">{selectedObjectIds.length} selected</span>
+              <div className="w-px h-4 bg-zinc-200 mx-1" />
+              <button 
+                onClick={handleDeleteSelected}
+                className="flex items-center gap-2 px-3 py-2 rounded-xl text-xs font-bold bg-red-50 text-red-600 hover:bg-red-100 transition-all"
+              >
+                <Trash2 className="w-4 h-4" />
+                Delete Selected
+              </button>
             </motion.div>
           )}
         </AnimatePresence>
