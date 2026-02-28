@@ -20,6 +20,7 @@ import {
   Grid3X3, 
   Square, 
   MousePointer2, 
+  MousePointerSquareDashed,
   PenTool,
   RotateCw,
   Info,
@@ -92,9 +93,10 @@ export default function App() {
 
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const [objectLibrary, setObjectLibrary] = useState<ObjectDefinition[]>([]);
-  const [mode, setMode] = useState<'select' | 'move' | 'draw-room' | 'draw-wall' | 'place-object' | 'measure-line' | 'measure-rect' | 'add-text'>('select');
+  const [mode, setMode] = useState<'select' | 'move' | 'draw-room' | 'draw-wall' | 'place-object' | 'measure-line' | 'measure-rect' | 'add-text' | 'multi-select'>('select');
   const [viewLocked, setViewLocked] = useState(false);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
+  const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
   const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
   const [selectedLabelId, setSelectedLabelId] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -127,6 +129,8 @@ export default function App() {
   const [tempWallStart, setTempWallStart] = useState<Point | null>(null);
   const [measureStart, setMeasureStart] = useState<Point | null>(null);
   const [measureEnd, setMeasureEnd] = useState<Point | null>(null);
+  const [selectionStart, setSelectionStart] = useState<Point | null>(null);
+  const [selectionEnd, setSelectionEnd] = useState<Point | null>(null);
   const [draggedObject, setDraggedObject] = useState<ObjectDefinition | null>(null);
   const [mousePos, setMousePos] = useState<Point>({ x: 0, y: 0 });
   const [hoveredWall, setHoveredWall] = useState<{ start: Point, end: Point } | null>(null);
@@ -190,6 +194,11 @@ export default function App() {
     if (mode !== 'measure-line' && mode !== 'measure-rect') {
       setMeasureStart(null);
       setMeasureEnd(null);
+    }
+    if (mode !== 'multi-select') {
+      setSelectionStart(null);
+      setSelectionEnd(null);
+      setSelectedObjectIds([]);
     }
   }, [mode]);
 
@@ -515,10 +524,56 @@ export default function App() {
   const handleMouseMove = (e: any) => {
     const stage = e.target.getStage();
     const pointer = stage.getRelativePointerPosition();
-    setMousePos({ 
+    const currentPos = { 
       x: pointer.x / PIXELS_PER_FOOT, 
       y: pointer.y / PIXELS_PER_FOOT 
-    });
+    };
+    setMousePos(currentPos);
+    
+    if (mode === 'multi-select' && selectionStart) {
+      setSelectionEnd(currentPos);
+    }
+  };
+
+  const handleMouseDown = (e: any) => {
+    if (mode === 'multi-select' && e.target === e.currentTarget) {
+      const stage = e.target.getStage();
+      const pointer = stage.getRelativePointerPosition();
+      setSelectionStart({ x: pointer.x / PIXELS_PER_FOOT, y: pointer.y / PIXELS_PER_FOOT });
+      setSelectionEnd(null);
+      setSelectedObjectIds([]);
+    }
+  };
+
+  const handleMouseUp = (e: any) => {
+    if (mode === 'multi-select' && selectionStart && selectionEnd) {
+      if (!activeRoom) return;
+      
+      const x1 = Math.min(selectionStart.x, selectionEnd.x);
+      const y1 = Math.min(selectionStart.y, selectionEnd.y);
+      const x2 = Math.max(selectionStart.x, selectionEnd.x);
+      const y2 = Math.max(selectionStart.y, selectionEnd.y);
+      
+      const selected = activeRoom.objects.filter(obj => {
+        const def = objectLibrary.find(d => d.id === obj.definitionId);
+        if (!def) return false;
+        
+        const isRotated = obj.rotation === 90 || obj.rotation === 270;
+        const w = isRotated ? def.length : def.width;
+        const h = isRotated ? def.width : def.length;
+        
+        const objX1 = obj.x - w/2;
+        const objY1 = obj.y - h/2;
+        const objX2 = obj.x + w/2;
+        const objY2 = obj.y + h/2;
+        
+        return objX1 >= x1 && objX2 <= x2 && objY1 >= y1 && objY2 <= y2;
+      }).map(o => o.id);
+      
+      setSelectedObjectIds(selected);
+      setSelectionStart(null);
+      setSelectionEnd(null);
+    }
   };
 
   const handleObjectDrop = (def: ObjectDefinition, x: number, y: number) => {
@@ -559,6 +614,32 @@ export default function App() {
     return true;
   };
 
+  const handleObjectDragMove = (id: string, e: any) => {
+    if (!activeRoom || !selectedObjectIds.includes(id)) return;
+    
+    const obj = activeRoom.objects.find(o => o.id === id);
+    if (!obj) return;
+
+    const newX = e.target.x() / PIXELS_PER_FOOT;
+    const newY = e.target.y() / PIXELS_PER_FOOT;
+    
+    const dx = newX - obj.x;
+    const dy = newY - obj.y;
+
+    setRooms(rooms.map(r => r.id === activeRoomId ? {
+      ...r,
+      objects: r.objects.map(o => {
+        if (selectedObjectIds.includes(o.id) && o.id !== id) {
+          return { ...o, x: o.x + dx, y: o.y + dy };
+        }
+        if (o.id === id) {
+          return { ...o, x: newX, y: newY };
+        }
+        return o;
+      })
+    } : r));
+  };
+
   const handleObjectDragEnd = (id: string, e: any) => {
     if (!activeRoom) return;
     
@@ -568,12 +649,28 @@ export default function App() {
     const obj = activeRoom.objects.find(o => o.id === id);
     if (!obj) return;
 
-    const updatedObj = { ...obj, x: newX, y: newY };
-    
-    setRooms(rooms.map(r => r.id === activeRoomId ? { 
-      ...r, 
-      objects: r.objects.map(o => o.id === id ? updatedObj : o) 
-    } : r));
+    if (selectedObjectIds.includes(id)) {
+      const dx = newX - obj.x;
+      const dy = newY - obj.y;
+      
+      setRooms(rooms.map(r => r.id === activeRoomId ? { 
+        ...r, 
+        objects: r.objects.map(o => {
+          if (selectedObjectIds.includes(o.id) && o.id !== id) {
+            return { ...o, x: o.x + dx, y: o.y + dy };
+          }
+          if (o.id === id) {
+            return { ...o, x: newX, y: newY };
+          }
+          return o;
+        }) 
+      } : r));
+    } else {
+      setRooms(rooms.map(r => r.id === activeRoomId ? { 
+        ...r, 
+        objects: r.objects.map(o => o.id === id ? { ...o, x: newX, y: newY } : o) 
+      } : r));
+    }
   };
 
   const handleWallDragEnd = (id: string, e: any) => {
@@ -1015,6 +1112,12 @@ export default function App() {
               label="Move Object" 
             />
             <ToolButton 
+              active={mode === 'multi-select'} 
+              onClick={() => setMode('multi-select')} 
+              icon={<MousePointerSquareDashed className="w-4 h-4" />} 
+              label="Multi-Select" 
+            />
+            <ToolButton 
               active={mode === 'draw-room'} 
               onClick={() => { setMode('draw-room'); setDrawingPoints([]); }} 
               icon={<Square className="w-4 h-4" />} 
@@ -1352,6 +1455,8 @@ export default function App() {
               });
             }}
             onClick={handleCanvasClick}
+            onMouseDown={handleMouseDown}
+            onMouseUp={handleMouseUp}
             onMouseMove={handleMouseMove}
           >
             <Layer>
@@ -1555,6 +1660,20 @@ export default function App() {
                 </Group>
               )}
 
+              {/* Selection Rect Preview */}
+              {mode === 'multi-select' && selectionStart && selectionEnd && (
+                <Rect
+                  x={Math.min(selectionStart.x, selectionEnd.x) * PIXELS_PER_FOOT}
+                  y={Math.min(selectionStart.y, selectionEnd.y) * PIXELS_PER_FOOT}
+                  width={Math.abs(selectionEnd.x - selectionStart.x) * PIXELS_PER_FOOT}
+                  height={Math.abs(selectionEnd.y - selectionStart.y) * PIXELS_PER_FOOT}
+                  stroke="#4f46e5"
+                  strokeWidth={1 / zoom}
+                  fill="#4f46e520"
+                  dash={[5, 5]}
+                />
+              )}
+
               {/* Placed Objects */}
               {activeRoom?.objects.map(obj => {
                 const def = objectLibrary.find(d => d.id === obj.definitionId);
@@ -1567,14 +1686,24 @@ export default function App() {
                     def={def}
                     zoom={zoom}
                     mode={mode}
+                    onDragMove={(e) => handleObjectDragMove(obj.id, e)}
                     onDragEnd={(e) => handleObjectDragEnd(obj.id, e)}
                     onRotate={() => handleRotate(obj.id)}
                     onDelete={() => handleDeleteObject(obj.id)}
                     isSelected={selectedObjectId === obj.id}
+                    isMultiSelected={selectedObjectIds.includes(obj.id)}
                     onSelect={() => {
-                      setSelectedObjectId(obj.id);
-                      setSelectedWallId(null);
-                      setSelectedLabelId(null);
+                      if (mode === 'multi-select') {
+                        if (selectedObjectIds.includes(obj.id)) {
+                          setSelectedObjectIds(selectedObjectIds.filter(id => id !== obj.id));
+                        } else {
+                          setSelectedObjectIds([...selectedObjectIds, obj.id]);
+                        }
+                      } else {
+                        setSelectedObjectId(obj.id);
+                        setSelectedWallId(null);
+                        setSelectedLabelId(null);
+                      }
                     }}
                     isValid={isValidPlacement(obj, activeRoom)}
                   />
@@ -1690,10 +1819,12 @@ function ObjectOnCanvas({
   def, 
   zoom, 
   mode,
+  onDragMove,
   onDragEnd, 
   onRotate, 
   onDelete, 
   isSelected, 
+  isMultiSelected,
   onSelect,
   isValid 
 }: { 
@@ -1701,15 +1832,17 @@ function ObjectOnCanvas({
   def: ObjectDefinition, 
   zoom: number, 
   mode: string,
+  onDragMove?: (e: any) => void,
   onDragEnd: (e: any) => void, 
   onRotate: () => void, 
   onDelete: () => void,
   isSelected: boolean,
+  isMultiSelected?: boolean,
   onSelect: () => void,
   isValid: boolean
 }) {
   const [isHovered, setIsHovered] = useState(false);
-  const isMoveMode = mode === 'move';
+  const isMoveMode = mode === 'move' || (mode === 'multi-select' && isMultiSelected);
   const isDoor = def.type === 'door';
   const isRotated = obj.rotation === 90 || obj.rotation === 270;
   const currentW = isRotated ? def.length : def.width;
@@ -1721,12 +1854,26 @@ function ObjectOnCanvas({
       y={obj.y * PIXELS_PER_FOOT}
       rotation={obj.rotation}
       draggable={isMoveMode}
+      onDragMove={onDragMove}
       onDragEnd={onDragEnd}
       onClick={onSelect}
       onDblClick={onRotate}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
     >
+      {/* Highlight for multi-selection */}
+      {isMultiSelected && (
+        <Rect
+          x={-def.width * PIXELS_PER_FOOT / 2 - 4 / zoom}
+          y={-def.length * PIXELS_PER_FOOT / 2 - 4 / zoom}
+          width={def.width * PIXELS_PER_FOOT + 8 / zoom}
+          height={def.length * PIXELS_PER_FOOT + 8 / zoom}
+          stroke="#4f46e5"
+          strokeWidth={2 / zoom}
+          dash={[4, 4]}
+          cornerRadius={4 / zoom}
+        />
+      )}
       {isDoor ? (
         <Group>
           {/* Door Frame/Wall segment */}
