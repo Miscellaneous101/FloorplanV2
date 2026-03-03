@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { 
   Room, 
   ObjectDefinition, 
@@ -38,6 +38,8 @@ import {
   Ruler,
   BoxSelect,
   Type,
+  Printer,
+  Edit3,
   DoorOpen
 } from 'lucide-react';
 import { Stage, Layer, Line, Rect, Circle, Group, Text, Arc } from 'react-konva';
@@ -93,7 +95,7 @@ export default function App() {
 
   const [activeRoomId, setActiveRoomId] = useState<string | null>(null);
   const [objectLibrary, setObjectLibrary] = useState<ObjectDefinition[]>([]);
-  const [mode, setMode] = useState<'select' | 'move' | 'draw-room' | 'draw-wall' | 'place-object' | 'measure-line' | 'measure-rect' | 'add-text' | 'multi-select'>('select');
+  const [mode, setMode] = useState<'select' | 'move' | 'draw-room' | 'draw-wall' | 'place-object' | 'measure-line' | 'measure-rect' | 'add-text' | 'multi-select' | 'print-section'>('select');
   const [viewLocked, setViewLocked] = useState(false);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
@@ -139,6 +141,8 @@ export default function App() {
   const [showTextInput, setShowTextInput] = useState(false);
   const [pendingTextPos, setPendingTextPos] = useState<Point | null>(null);
   const [newText, setNewText] = useState("");
+  const [isNamesLocked, setIsNamesLocked] = useState(true);
+  const stageRef = useRef<any>(null);
   
   // Manual Item State
   const [newItemName, setNewItemName] = useState("");
@@ -195,7 +199,7 @@ export default function App() {
       setMeasureStart(null);
       setMeasureEnd(null);
     }
-    if (mode !== 'multi-select') {
+    if (mode !== 'multi-select' && mode !== 'print-section') {
       setSelectionStart(null);
       setSelectionEnd(null);
       setSelectedObjectIds([]);
@@ -252,7 +256,65 @@ export default function App() {
   };
 
   const handleRenameRoom = (id: string, name: string) => {
+    if (isNamesLocked) return;
     setRooms(rooms.map(r => r.id === id ? { ...r, name } : r));
+  };
+
+  const handleRenameObjectDef = (id: string, name: string) => {
+    if (isNamesLocked) return;
+    setObjectLibrary(prev => prev.map(obj => obj.id === id ? { ...obj, name } : obj));
+  };
+
+  const handlePrint = (section?: { x1: number, y1: number, x2: number, y2: number }) => {
+    if (!stageRef.current) return;
+    
+    let dataUrl;
+    const printSection = section || (mode === 'multi-select' && selectionStart && selectionEnd ? {
+      x1: selectionStart.x,
+      y1: selectionStart.y,
+      x2: selectionEnd.x,
+      y2: selectionEnd.y
+    } : null);
+
+    if (printSection) {
+      // Print section
+      const x1 = Math.min(printSection.x1, printSection.x2) * PIXELS_PER_FOOT;
+      const y1 = Math.min(printSection.y1, printSection.y2) * PIXELS_PER_FOOT;
+      const w = Math.abs(printSection.x2 - printSection.x1) * PIXELS_PER_FOOT;
+      const h = Math.abs(printSection.y2 - printSection.y1) * PIXELS_PER_FOOT;
+      
+      dataUrl = stageRef.current.toDataURL({
+        x: x1 * zoom + stagePos.x,
+        y: y1 * zoom + stagePos.y,
+        width: w * zoom,
+        height: h * zoom,
+        pixelRatio: 2
+      });
+    } else {
+      // Print whole stage
+      dataUrl = stageRef.current.toDataURL({ pixelRatio: 2 });
+    }
+
+    const windowContent = `
+      <!DOCTYPE html>
+      <html>
+        <head><title>Print Floor Plan</title></head>
+        <body style="margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f4f4f5;">
+          <img src="${dataUrl}" style="max-width: 100%; max-height: 100%; box-shadow: 0 10px 30px rgba(0,0,0,0.1); background: white;" />
+          <script>
+            window.onload = () => {
+              window.print();
+              // window.close(); // Optional: close after print
+            };
+          </script>
+        </body>
+      </html>
+    `;
+    const printWindow = window.open('', '_blank');
+    if (printWindow) {
+      printWindow.document.write(windowContent);
+      printWindow.document.close();
+    }
   };
 
   const handleCSVUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -547,22 +609,35 @@ export default function App() {
     };
     setMousePos(currentPos);
     
-    if (mode === 'multi-select' && selectionStart) {
+    if ((mode === 'multi-select' || mode === 'print-section') && selectionStart) {
       setSelectionEnd(currentPos);
     }
   };
 
   const handleMouseDown = (e: any) => {
-    if (mode === 'multi-select' && e.target === e.currentTarget) {
+    if ((mode === 'multi-select' || mode === 'print-section') && e.target === e.currentTarget) {
       const stage = e.target.getStage();
       const pointer = stage.getRelativePointerPosition();
       setSelectionStart({ x: pointer.x / PIXELS_PER_FOOT, y: pointer.y / PIXELS_PER_FOOT });
       setSelectionEnd(null);
-      setSelectedObjectIds([]);
+      if (mode === 'multi-select') setSelectedObjectIds([]);
     }
   };
 
   const handleMouseUp = (e: any) => {
+    if (mode === 'print-section' && selectionStart && selectionEnd) {
+      handlePrint({
+        x1: selectionStart.x,
+        y1: selectionStart.y,
+        x2: selectionEnd.x,
+        y2: selectionEnd.y
+      });
+      setSelectionStart(null);
+      setSelectionEnd(null);
+      setMode('select');
+      return;
+    }
+
     if (mode === 'multi-select' && selectionStart && selectionEnd) {
       if (!activeRoom) return;
       
@@ -935,12 +1010,55 @@ export default function App() {
             <Layout className="w-6 h-6 text-indigo-600" />
             8th Floor
           </h1>
-          <button onClick={() => setSidebarOpen(false)} className="p-1 hover:bg-zinc-100 rounded">
-            <ChevronLeft className="w-5 h-5" />
-          </button>
+          <div className="flex items-center gap-1">
+            <button 
+              onClick={() => handlePrint()}
+              className="p-1.5 text-zinc-500 hover:bg-zinc-100 rounded transition-colors"
+              title="Print Whole Plan"
+            >
+              <Printer className="w-4 h-4" />
+            </button>
+            <button 
+              onClick={() => setMode('print-section')}
+              className={cn(
+                "p-1.5 rounded transition-colors",
+                mode === 'print-section' ? "bg-indigo-100 text-indigo-600" : "text-zinc-500 hover:bg-zinc-100"
+              )}
+              title="Print Section"
+            >
+              <BoxSelect className="w-4 h-4" />
+            </button>
+            <button onClick={() => setSidebarOpen(false)} className="p-1 hover:bg-zinc-100 rounded">
+              <ChevronLeft className="w-5 h-5" />
+            </button>
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto min-w-[320px] p-4 space-y-6">
+          {/* Settings / Toggles */}
+          <section>
+            <div className="flex items-center justify-between p-3 bg-zinc-50 rounded-xl border border-zinc-200">
+              <div className="flex items-center gap-2">
+                <Edit3 className="w-4 h-4 text-zinc-500" />
+                <span className="text-xs font-semibold text-zinc-700">Edit Names</span>
+              </div>
+              <button 
+                onClick={() => setIsNamesLocked(!isNamesLocked)}
+                className={cn(
+                  "relative inline-flex h-5 w-9 items-center rounded-full transition-colors focus:outline-none",
+                  !isNamesLocked ? "bg-indigo-600" : "bg-zinc-300"
+                )}
+              >
+                <span 
+                  className={cn(
+                    "inline-block h-3 w-3 transform rounded-full bg-white transition-transform",
+                    !isNamesLocked ? "translate-x-5" : "translate-x-1"
+                  )} 
+                />
+              </button>
+            </div>
+          </section>
+
           {/* Rooms Section */}
           <section>
             <div className="flex items-center justify-between mb-3">
@@ -981,10 +1099,14 @@ export default function App() {
                   <div className="flex items-center gap-2 overflow-hidden">
                     <Square className="w-4 h-4 flex-shrink-0" />
                     <input 
-                      className="bg-transparent border-none focus:ring-0 p-0 text-sm font-medium truncate w-full"
+                      className={cn(
+                        "bg-transparent border-none focus:ring-0 p-0 text-sm font-medium truncate w-full",
+                        isNamesLocked && "cursor-default pointer-events-none"
+                      )}
                       value={room.name}
                       onChange={(e) => handleRenameRoom(room.id, e.target.value)}
                       onClick={(e) => e.stopPropagation()}
+                      readOnly={isNamesLocked}
                     />
                   </div>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1062,9 +1184,18 @@ export default function App() {
                       className="p-3 bg-white border border-zinc-200 rounded-xl hover:border-indigo-300 cursor-grab active:cursor-grabbing transition-all group"
                     >
                       <div className="flex justify-between items-start mb-1">
-                        <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-2 flex-1">
                           {obj.type === 'door' && <DoorOpen className="w-4 h-4 text-indigo-500" />}
-                          <span className="text-sm font-semibold text-zinc-800">{obj.name}</span>
+                          <input 
+                            className={cn(
+                              "bg-transparent border-none focus:ring-0 p-0 text-sm font-semibold text-zinc-800 w-full",
+                              isNamesLocked && "cursor-default pointer-events-none"
+                            )}
+                            value={obj.name}
+                            onChange={(e) => handleRenameObjectDef(obj.id, e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            readOnly={isNamesLocked}
+                          />
                         </div>
                         <span className="text-[10px] px-1.5 py-0.5 bg-zinc-100 text-zinc-500 rounded-full font-mono">
                           {count}
@@ -1467,6 +1598,7 @@ export default function App() {
           }}
         >
           <Stage
+            ref={stageRef}
             width={window.innerWidth}
             height={window.innerHeight}
             scaleX={zoom}
@@ -1707,15 +1839,15 @@ export default function App() {
               )}
 
               {/* Selection Rect Preview */}
-              {mode === 'multi-select' && selectionStart && selectionEnd && (
+              {(mode === 'multi-select' || mode === 'print-section') && selectionStart && selectionEnd && (
                 <Rect
                   x={Math.min(selectionStart.x, selectionEnd.x) * PIXELS_PER_FOOT}
                   y={Math.min(selectionStart.y, selectionEnd.y) * PIXELS_PER_FOOT}
                   width={Math.abs(selectionEnd.x - selectionStart.x) * PIXELS_PER_FOOT}
                   height={Math.abs(selectionEnd.y - selectionStart.y) * PIXELS_PER_FOOT}
-                  stroke="#4f46e5"
+                  stroke={mode === 'print-section' ? "#10b981" : "#4f46e5"}
                   strokeWidth={1 / zoom}
-                  fill="#4f46e520"
+                  fill={mode === 'print-section' ? "#10b98120" : "#4f46e520"}
                   dash={[5, 5]}
                 />
               )}
