@@ -101,6 +101,7 @@ export default function App() {
   const [selectedObjectIds, setSelectedObjectIds] = useState<string[]>([]);
   const [selectedWallId, setSelectedWallId] = useState<string | null>(null);
   const [selectedLabelId, setSelectedLabelId] = useState<string | null>(null);
+  const [selectedLabelIds, setSelectedLabelIds] = useState<string[]>([]);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [zoom, setZoom] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 100, y: 100 });
@@ -203,6 +204,7 @@ export default function App() {
       setSelectionStart(null);
       setSelectionEnd(null);
       setSelectedObjectIds([]);
+      setSelectedLabelIds([]);
     }
   }, [mode]);
 
@@ -620,7 +622,10 @@ export default function App() {
       const pointer = stage.getRelativePointerPosition();
       setSelectionStart({ x: pointer.x / PIXELS_PER_FOOT, y: pointer.y / PIXELS_PER_FOOT });
       setSelectionEnd(null);
-      if (mode === 'multi-select') setSelectedObjectIds([]);
+      if (mode === 'multi-select') {
+        setSelectedObjectIds([]);
+        setSelectedLabelIds([]);
+      }
     }
   };
 
@@ -646,7 +651,7 @@ export default function App() {
       const x2 = Math.max(selectionStart.x, selectionEnd.x);
       const y2 = Math.max(selectionStart.y, selectionEnd.y);
       
-      const selected = activeRoom.objects.filter(obj => {
+      const selectedObjs = activeRoom.objects.filter(obj => {
         const def = objectLibrary.find(d => d.id === obj.definitionId);
         if (!def) return false;
         
@@ -661,8 +666,13 @@ export default function App() {
         
         return objX1 >= x1 && objX2 <= x2 && objY1 >= y1 && objY2 <= y2;
       }).map(o => o.id);
+
+      const selectedLabels = (activeRoom.labels || []).filter(label => {
+        return label.x >= x1 && label.x <= x2 && label.y >= y1 && label.y <= y2;
+      }).map(l => l.id);
       
-      setSelectedObjectIds(selected);
+      setSelectedObjectIds(selectedObjs);
+      setSelectedLabelIds(selectedLabels);
       setSelectionStart(null);
       setSelectionEnd(null);
     }
@@ -971,15 +981,50 @@ export default function App() {
     setBulkInputText("");
   };
 
+  const updateTextStyle = (updates: { fontSize?: number, fontWeight?: string, color?: string }) => {
+    if (!activeRoom) return;
+
+    setRooms(rooms.map(r => {
+      if (r.id !== activeRoomId) return r;
+
+      let newObjects = [...r.objects];
+      let newLabels = [...(r.labels || [])];
+
+      if (selectedObjectIds.length > 0) {
+        newObjects = newObjects.map(obj => 
+          selectedObjectIds.includes(obj.id) ? { ...obj, ...updates } : obj
+        );
+      } else if (selectedObjectId) {
+        newObjects = newObjects.map(obj => 
+          obj.id === selectedObjectId ? { ...obj, ...updates } : obj
+        );
+      }
+
+      if (selectedLabelIds.length > 0) {
+        newLabels = newLabels.map(label => 
+          selectedLabelIds.includes(label.id) ? { ...label, ...updates } : label
+        );
+      } else if (selectedLabelId) {
+        newLabels = newLabels.map(label => 
+          label.id === selectedLabelId ? { ...label, ...updates } : label
+        );
+      }
+
+      return { ...r, objects: newObjects, labels: newLabels };
+    }));
+  };
+
   const handleDeleteSelected = () => {
     if (!activeRoom) return;
     
-    if (selectedObjectIds.length > 0) {
+    if (selectedObjectIds.length > 0 || selectedLabelIds.length > 0) {
       setRooms(rooms.map(r => r.id === activeRoomId ? { 
         ...r, 
-        objects: r.objects.filter(o => !selectedObjectIds.includes(o.id)) 
+        objects: r.objects.filter(o => !selectedObjectIds.includes(o.id)),
+        labels: r.labels?.filter(l => !selectedLabelIds.includes(l.id))
       } : r));
       setSelectedObjectIds([]);
+      setSelectedLabelIds([]);
     } else if (selectedObjectId) {
       handleDeleteObject(selectedObjectId);
       setSelectedObjectId(null);
@@ -1469,6 +1514,78 @@ export default function App() {
               Bulk Input
             </button>
           </div>
+
+          {/* Text Styling Panel */}
+          {(selectedObjectId || selectedLabelId || selectedObjectIds.length > 0 || selectedLabelIds.length > 0) && (
+            <motion.div 
+              initial={{ y: 20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              className="flex items-center gap-3 p-2 bg-white/80 backdrop-blur-md border border-zinc-200 shadow-lg rounded-xl animate-in fade-in slide-in-from-bottom-2"
+            >
+              <span className="text-[10px] font-bold uppercase tracking-wider text-zinc-400 px-2">Text Style</span>
+              
+              <div className="flex bg-zinc-100 rounded-lg p-1">
+                <button 
+                  onClick={() => {
+                    const current = activeRoom?.objects.find(o => o.id === selectedObjectId || selectedObjectIds.includes(o.id))?.fontSize || 
+                                   activeRoom?.labels?.find(l => l.id === selectedLabelId || selectedLabelIds.includes(l.id))?.fontSize || 1;
+                    updateTextStyle({ fontSize: Math.max(0.2, current - 0.2) });
+                  }}
+                  className="p-1 hover:bg-white rounded text-zinc-500"
+                  title="Smaller"
+                >
+                  <span className="text-xs font-bold">A-</span>
+                </button>
+                <div className="w-px h-4 bg-zinc-200 mx-1 self-center" />
+                <button 
+                  onClick={() => {
+                    const current = activeRoom?.objects.find(o => o.id === selectedObjectId || selectedObjectIds.includes(o.id))?.fontSize || 
+                                   activeRoom?.labels?.find(l => l.id === selectedLabelId || selectedLabelIds.includes(l.id))?.fontSize || 1;
+                    updateTextStyle({ fontSize: current + 0.2 });
+                  }}
+                  className="p-1 hover:bg-white rounded text-zinc-500"
+                  title="Larger"
+                >
+                  <span className="text-sm font-bold">A+</span>
+                </button>
+              </div>
+
+              <button 
+                onClick={() => {
+                  const current = activeRoom?.objects.find(o => o.id === selectedObjectId || selectedObjectIds.includes(o.id))?.fontWeight || 
+                                 activeRoom?.labels?.find(l => l.id === selectedLabelId || selectedLabelIds.includes(l.id))?.fontWeight || 'normal';
+                  updateTextStyle({ fontWeight: current === 'bold' ? 'normal' : 'bold' });
+                }}
+                className={cn(
+                  "p-1.5 rounded-lg transition-all",
+                  (activeRoom?.objects.find(o => o.id === selectedObjectId || selectedObjectIds.includes(o.id))?.fontWeight === 'bold' || 
+                   activeRoom?.labels?.find(l => l.id === selectedLabelId || selectedLabelIds.includes(l.id))?.fontWeight === 'bold') 
+                   ? "bg-indigo-100 text-indigo-600" : "bg-zinc-100 text-zinc-500"
+                )}
+                title="Bold"
+              >
+                <span className="text-xs font-black">B</span>
+              </button>
+
+              <div className="w-px h-6 bg-zinc-200 mx-1" />
+
+              <div className="flex gap-1">
+                {['#18181b', '#ef4444', '#22c55e', '#4f46e5', '#f59e0b'].map(color => (
+                  <button
+                    key={color}
+                    onClick={() => updateTextStyle({ color })}
+                    className={cn(
+                      "w-5 h-5 rounded-full border border-black/5 transition-all",
+                      (activeRoom?.objects.find(o => o.id === selectedObjectId || selectedObjectIds.includes(o.id))?.color === color || 
+                       activeRoom?.labels?.find(l => l.id === selectedLabelId || selectedLabelIds.includes(l.id))?.color === color)
+                       ? "scale-125 ring-2 ring-indigo-500 ring-offset-1" : "hover:scale-110"
+                    )}
+                    style={{ backgroundColor: color }}
+                  />
+                ))}
+              </div>
+            </motion.div>
+          )}
         </div>
 
         {/* Text Input Modal */}
@@ -1562,14 +1679,16 @@ export default function App() {
 
         {/* Selection Actions */}
         <AnimatePresence>
-          {selectedObjectIds.length > 0 && (
+          {(selectedObjectIds.length > 0 || selectedLabelIds.length > 0) && (
             <motion.div 
               initial={{ y: -20, opacity: 0 }}
               animate={{ y: 0, opacity: 1 }}
               exit={{ y: -20, opacity: 0 }}
               className="absolute top-20 left-1/2 -translate-x-1/2 z-10 flex items-center gap-2 p-2 bg-white/90 backdrop-blur-md border border-zinc-200 shadow-xl rounded-2xl"
             >
-              <span className="text-xs font-bold px-2 text-zinc-500">{selectedObjectIds.length} selected</span>
+              <span className="text-xs font-bold px-2 text-zinc-500">
+                {selectedObjectIds.length + selectedLabelIds.length} selected
+              </span>
               <div className="w-px h-4 bg-zinc-200 mx-1" />
               <button 
                 onClick={handleDeleteSelected}
@@ -2116,8 +2235,9 @@ function ObjectOnCanvas({
             y={-currentH * PIXELS_PER_FOOT / 2}
             width={currentW * PIXELS_PER_FOOT}
             height={currentH * PIXELS_PER_FOOT}
-            fontSize={Math.min(16, (currentW * PIXELS_PER_FOOT) / 3, (currentH * PIXELS_PER_FOOT) / 3)}
-            fill={isValid ? "#64748b" : "#ef4444"}
+            fontSize={(obj.fontSize || 1) * Math.min(16, (currentW * PIXELS_PER_FOOT) / 3, (currentH * PIXELS_PER_FOOT) / 3)}
+            fill={obj.color || (isValid ? "#64748b" : "#ef4444")}
+            fontStyle={obj.fontWeight === 'bold' ? 'bold' : 'normal'}
             fontFamily="JetBrains Mono"
             align="center"
             verticalAlign="middle"
@@ -2211,7 +2331,8 @@ function LabelOnCanvas({
       <Text
         text={label.text}
         fontSize={label.fontSize * PIXELS_PER_FOOT}
-        fill="#1e293b"
+        fill={label.color || "#1e293b"}
+        fontStyle={label.fontWeight === 'bold' ? 'bold' : 'normal'}
         fontFamily="JetBrains Mono"
         align="center"
         verticalAlign="middle"

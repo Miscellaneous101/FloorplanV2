@@ -29,6 +29,9 @@ export interface PlacedObject {
   x: number; // in decimal feet
   y: number; // in decimal feet
   rotation: number; // 0, 90, 180, 270
+  fontSize?: number;
+  fontWeight?: string;
+  color?: string;
 }
 
 export interface TempWall {
@@ -46,6 +49,8 @@ export interface RoomLabel {
   y: number;
   fontSize: number;
   rotation?: number;
+  fontWeight?: string;
+  color?: string;
 }
 
 export interface Room {
