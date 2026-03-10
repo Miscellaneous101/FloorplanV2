@@ -143,6 +143,7 @@ export default function App() {
   const [pendingTextPos, setPendingTextPos] = useState<Point | null>(null);
   const [newText, setNewText] = useState("");
   const [isNamesLocked, setIsNamesLocked] = useState(true);
+  const [isPrinting, setIsPrinting] = useState(false);
   const stageRef = useRef<any>(null);
   
   // Manual Item State
@@ -175,8 +176,8 @@ export default function App() {
     if (!hasDoor) {
       initialLibrary.push({
         id: 'default-door',
-        name: 'Standard Door',
-        width: 3,
+        name: 'Double Door',
+        width: 6,
         length: 3,
         type: 'door'
       });
@@ -267,10 +268,17 @@ export default function App() {
     setObjectLibrary(prev => prev.map(obj => obj.id === id ? { ...obj, name } : obj));
   };
 
-  const handlePrint = (section?: { x1: number, y1: number, x2: number, y2: number }) => {
+  const handlePrint = async (section?: { x1: number, y1: number, x2: number, y2: number }) => {
     if (!stageRef.current) return;
     
+    setIsPrinting(true);
+    
+    // Wait for state update and re-render to hide grid and show measurements
+    await new Promise(resolve => setTimeout(resolve, 100));
+
     let dataUrl;
+    let orientation: 'landscape' | 'portrait' = 'landscape';
+
     const printSection = section || (mode === 'multi-select' && selectionStart && selectionEnd ? {
       x1: selectionStart.x,
       y1: selectionStart.y,
@@ -279,34 +287,97 @@ export default function App() {
     } : null);
 
     if (printSection) {
-      // Print section
-      const x1 = Math.min(printSection.x1, printSection.x2) * PIXELS_PER_FOOT;
-      const y1 = Math.min(printSection.y1, printSection.y2) * PIXELS_PER_FOOT;
-      const w = Math.abs(printSection.x2 - printSection.x1) * PIXELS_PER_FOOT;
-      const h = Math.abs(printSection.y2 - printSection.y1) * PIXELS_PER_FOOT;
+      const x1 = Math.min(printSection.x1, printSection.x2);
+      const y1 = Math.min(printSection.y1, printSection.y2);
+      const x2 = Math.max(printSection.x1, printSection.x2);
+      const y2 = Math.max(printSection.y1, printSection.y2);
+      
+      const wFeet = x2 - x1;
+      const hFeet = y2 - y1;
+      orientation = wFeet > hFeet ? 'landscape' : 'portrait';
+
+      const screenX = x1 * PIXELS_PER_FOOT * zoom + stagePos.x;
+      const screenY = y1 * PIXELS_PER_FOOT * zoom + stagePos.y;
+      const screenW = wFeet * PIXELS_PER_FOOT * zoom;
+      const screenH = hFeet * PIXELS_PER_FOOT * zoom;
       
       dataUrl = stageRef.current.toDataURL({
-        x: x1 * zoom + stagePos.x,
-        y: y1 * zoom + stagePos.y,
-        width: w * zoom,
-        height: h * zoom,
-        pixelRatio: 2
+        x: screenX,
+        y: screenY,
+        width: screenW,
+        height: screenH,
+        pixelRatio: 3
       });
     } else {
-      // Print whole stage
-      dataUrl = stageRef.current.toDataURL({ pixelRatio: 2 });
+      // Print whole stage - find bounding box of all elements
+      const box = stageRef.current.getLayers()[0].getClientRect();
+      orientation = box.width > box.height ? 'landscape' : 'portrait';
+      
+      dataUrl = stageRef.current.toDataURL({ 
+        x: box.x,
+        y: box.y,
+        width: box.width,
+        height: box.height,
+        pixelRatio: 3 
+      });
     }
+
+    setIsPrinting(false);
 
     const windowContent = `
       <!DOCTYPE html>
       <html>
-        <head><title>Print Floor Plan</title></head>
-        <body style="margin: 0; display: flex; justify-content: center; align-items: center; height: 100vh; background: #f4f4f5;">
-          <img src="${dataUrl}" style="max-width: 100%; max-height: 100%; box-shadow: 0 10px 30px rgba(0,0,0,0.1); background: white;" />
+        <head>
+          <title>Print Floor Plan</title>
+          <style>
+            @page {
+              margin: 0;
+              size: ${orientation};
+            }
+            body {
+              margin: 0;
+              padding: 0;
+              display: flex;
+              justify-content: center;
+              align-items: center;
+              width: 100vw;
+              height: 100vh;
+              background: white;
+              overflow: hidden;
+            }
+            img {
+              max-width: 100%;
+              max-height: 100%;
+              object-fit: contain;
+              display: block;
+            }
+            @media print {
+              body { 
+                width: 100%;
+                height: 100%;
+                margin: 0 !important;
+                padding: 0 !important;
+              }
+              img { 
+                width: 100% !important;
+                height: 100% !important;
+                max-width: 100vw !important;
+                max-height: 100vh !important;
+                object-fit: contain !important;
+                page-break-inside: avoid;
+                break-inside: avoid;
+              }
+            }
+          </style>
+        </head>
+        <body>
+          <img src="${dataUrl}" />
           <script>
             window.onload = () => {
-              window.print();
-              // window.close(); // Optional: close after print
+              setTimeout(() => {
+                window.print();
+                window.onafterprint = () => window.close();
+              }, 1000);
             };
           </script>
         </body>
@@ -428,44 +499,56 @@ export default function App() {
 
   const snapToGrid = (val: number) => Math.round(val / GRID_SIZE) * GRID_SIZE;
 
-  const findSnapTarget = (x: number, y: number, objId?: string) => {
+  const findSnapTarget = (x: number, y: number, objId?: string, customThreshold?: number) => {
     if (!activeRoom) return { x: snapToGrid(x), y: snapToGrid(y) };
 
-    const threshold = 0.5; // 6 inches
+    const threshold = customThreshold || 0.5; // 6 inches default
     let snappedX = snapToGrid(x);
     let snappedY = snapToGrid(y);
+    
+    let bestDistX = threshold;
+    let bestDistY = threshold;
 
-    // Snap to walls
+    // Helper to update snap if closer than current best
+    const updateSnapX = (val: number) => {
+      const dist = Math.abs(x - val);
+      if (dist < bestDistX) {
+        snappedX = val;
+        bestDistX = dist;
+      }
+    };
+    const updateSnapY = (val: number) => {
+      const dist = Math.abs(y - val);
+      if (dist < bestDistY) {
+        snappedY = val;
+        bestDistY = dist;
+      }
+    };
+
+    // 1. Snap to room boundary walls
     activeRoom.points.forEach((p, i) => {
-      const p1 = p;
-      const p2 = activeRoom.points[(i + 1) % activeRoom.points.length];
-      
-      // Vertical wall
-      if (Math.abs(p1.x - p2.x) < 0.01) {
-        if (Math.abs(x - p1.x) < threshold) snappedX = p1.x;
-      }
-      // Horizontal wall
-      if (Math.abs(p1.y - p2.y) < 0.01) {
-        if (Math.abs(y - p1.y) < threshold) snappedY = p1.y;
-      }
+      const next = activeRoom.points[(i + 1) % activeRoom.points.length];
+      if (Math.abs(p.x - next.x) < 0.01) updateSnapX(p.x);
+      if (Math.abs(p.y - next.y) < 0.01) updateSnapY(p.y);
     });
 
-    // Snap to other objects
+    // 2. Snap to temp walls
+    activeRoom.tempWalls.forEach(wall => {
+      if (Math.abs(wall.start.x - wall.end.x) < 0.01) updateSnapX(wall.start.x);
+      if (Math.abs(wall.start.y - wall.end.y) < 0.01) updateSnapY(wall.start.y);
+    });
+
+    // 3. Snap to objects
     activeRoom.objects.forEach(other => {
       if (other.id === objId) return;
       const otherDef = objectLibrary.find(d => d.id === other.definitionId);
       if (!otherDef) return;
       const rect = getObjectRect(other, otherDef);
       
-      const edgesX = [rect.x, rect.x + rect.width];
-      const edgesY = [rect.y, rect.y + rect.height];
-
-      edgesX.forEach(ex => {
-        if (Math.abs(x - ex) < threshold) snappedX = ex;
-      });
-      edgesY.forEach(ey => {
-        if (Math.abs(y - ey) < threshold) snappedY = ey;
-      });
+      updateSnapX(rect.x);
+      updateSnapX(rect.x + rect.width);
+      updateSnapY(rect.y);
+      updateSnapY(rect.y + rect.height);
     });
 
     return { x: snappedX, y: snappedY };
@@ -474,7 +557,13 @@ export default function App() {
   const handleCanvasClick = (e: any) => {
     const stage = e.target.getStage();
     const pointer = stage.getRelativePointerPosition();
-    let { x: gridX, y: gridY } = findSnapTarget(pointer.x / PIXELS_PER_FOOT, pointer.y / PIXELS_PER_FOOT);
+    const isMeasurement = mode === 'measure-line' || mode === 'measure-rect';
+    let { x: gridX, y: gridY } = findSnapTarget(
+      pointer.x / PIXELS_PER_FOOT, 
+      pointer.y / PIXELS_PER_FOOT, 
+      undefined, 
+      isMeasurement ? 1.0 : 0.5
+    );
 
     // Handle measurement tools first so they work even when clicking on objects/walls
     if (mode === 'measure-line' || mode === 'measure-rect') {
@@ -1679,6 +1768,17 @@ export default function App() {
 
         {/* Selection Actions */}
         <AnimatePresence>
+          {mode === 'print-section' && !selectionStart && (
+            <motion.div 
+              initial={{ y: -20, opacity: 0 }}
+              animate={{ y: 0, opacity: 1 }}
+              exit={{ y: -20, opacity: 0 }}
+              className="absolute top-20 left-1/2 -translate-x-1/2 z-10 flex items-center gap-3 p-3 bg-emerald-600 text-white shadow-xl rounded-2xl"
+            >
+              <Printer className="w-4 h-4" />
+              <span className="text-xs font-bold">Click and drag to select print area</span>
+            </motion.div>
+          )}
           {(selectedObjectIds.length > 0 || selectedLabelIds.length > 0) && (
             <motion.div 
               initial={{ y: -20, opacity: 0 }}
@@ -1758,7 +1858,7 @@ export default function App() {
           >
             <Layer>
               {/* Grid */}
-              <GridLayer zoom={zoom} />
+              <GridLayer zoom={zoom} isPrinting={isPrinting} />
 
               {/* Room Boundary */}
               {activeRoom && activeRoom.points.length > 0 && (
@@ -1784,6 +1884,19 @@ export default function App() {
                     fill="#4f46e510"
                     listening={false}
                   />
+                </Group>
+              )}
+
+              {/* All Wall Measurements when printing */}
+              {isPrinting && activeRoom && (
+                <Group>
+                  {activeRoom.points.map((p, i) => {
+                    const next = activeRoom.points[(i + 1) % activeRoom.points.length];
+                    return <WallMeasurements key={`print-wall-${i}`} wall={{ start: p, end: next }} room={activeRoom} zoom={zoom} isPrinting={true} />;
+                  })}
+                  {activeRoom.tempWalls.map(wall => (
+                    <WallMeasurements key={`print-temp-wall-${wall.id}`} wall={{ start: wall.start, end: wall.end }} room={activeRoom} zoom={zoom} isPrinting={true} />
+                  ))}
                 </Group>
               )}
 
@@ -1959,16 +2072,29 @@ export default function App() {
 
               {/* Selection Rect Preview */}
               {(mode === 'multi-select' || mode === 'print-section') && selectionStart && selectionEnd && (
-                <Rect
-                  x={Math.min(selectionStart.x, selectionEnd.x) * PIXELS_PER_FOOT}
-                  y={Math.min(selectionStart.y, selectionEnd.y) * PIXELS_PER_FOOT}
-                  width={Math.abs(selectionEnd.x - selectionStart.x) * PIXELS_PER_FOOT}
-                  height={Math.abs(selectionEnd.y - selectionStart.y) * PIXELS_PER_FOOT}
-                  stroke={mode === 'print-section' ? "#10b981" : "#4f46e5"}
-                  strokeWidth={1 / zoom}
-                  fill={mode === 'print-section' ? "#10b98120" : "#4f46e520"}
-                  dash={[5, 5]}
-                />
+                <Group>
+                  <Rect
+                    x={Math.min(selectionStart.x, selectionEnd.x) * PIXELS_PER_FOOT}
+                    y={Math.min(selectionStart.y, selectionEnd.y) * PIXELS_PER_FOOT}
+                    width={Math.abs(selectionEnd.x - selectionStart.x) * PIXELS_PER_FOOT}
+                    height={Math.abs(selectionEnd.y - selectionStart.y) * PIXELS_PER_FOOT}
+                    stroke={mode === 'print-section' ? "#10b981" : "#4f46e5"}
+                    strokeWidth={2 / zoom}
+                    fill={mode === 'print-section' ? "#10b98115" : "#4f46e515"}
+                    dash={[5, 5]}
+                  />
+                  {mode === 'print-section' && (
+                    <Text
+                      text="RELEASE TO PRINT AREA"
+                      x={Math.min(selectionStart.x, selectionEnd.x) * PIXELS_PER_FOOT}
+                      y={Math.min(selectionStart.y, selectionEnd.y) * PIXELS_PER_FOOT - 20 / zoom}
+                      fontSize={12 / zoom}
+                      fill="#059669"
+                      fontStyle="bold"
+                      fontFamily="JetBrains Mono"
+                    />
+                  )}
+                </Group>
               )}
 
               {/* Placed Objects */}
@@ -2084,7 +2210,8 @@ function ToolButton({ active, onClick, icon, label }: { active: boolean, onClick
   );
 }
 
-function GridLayer({ zoom }: { zoom: number }) {
+function GridLayer({ zoom, isPrinting }: { zoom: number, isPrinting?: boolean }) {
+  if (isPrinting) return null;
   const lines = [];
   const size = 500; // 500 feet
   const step = PIXELS_PER_FOOT;
@@ -2153,7 +2280,10 @@ function ObjectOnCanvas({
       draggable={isMoveMode}
       onDragMove={onDragMove}
       onDragEnd={onDragEnd}
-      onClick={onSelect}
+      onClick={(e) => {
+        if (mode === 'measure-line' || mode === 'measure-rect') return;
+        onSelect();
+      }}
       onDblClick={onRotate}
       onMouseEnter={() => setIsHovered(true)}
       onMouseLeave={() => setIsHovered(false)}
@@ -2179,20 +2309,38 @@ function ObjectOnCanvas({
             stroke="#1e293b"
             strokeWidth={4 / zoom}
           />
-          {/* Door Leaf */}
+          {/* Left Door Leaf */}
           <Line
             points={[-def.width * PIXELS_PER_FOOT / 2, 0, -def.width * PIXELS_PER_FOOT / 2, -def.length * PIXELS_PER_FOOT]}
             stroke="#1e293b"
             strokeWidth={2 / zoom}
           />
-          {/* Swing Arc */}
+          {/* Right Door Leaf */}
+          <Line
+            points={[def.width * PIXELS_PER_FOOT / 2, 0, def.width * PIXELS_PER_FOOT / 2, -def.length * PIXELS_PER_FOOT]}
+            stroke="#1e293b"
+            strokeWidth={2 / zoom}
+          />
+          {/* Left Swing Arc */}
           <Arc
             x={-def.width * PIXELS_PER_FOOT / 2}
             y={0}
-            innerRadius={def.width * PIXELS_PER_FOOT}
-            outerRadius={def.width * PIXELS_PER_FOOT}
+            innerRadius={def.width * PIXELS_PER_FOOT / 2}
+            outerRadius={def.width * PIXELS_PER_FOOT / 2}
             angle={90}
             rotation={-90}
+            stroke="#1e293b"
+            strokeWidth={1 / zoom}
+            dash={[2, 2]}
+          />
+          {/* Right Swing Arc */}
+          <Arc
+            x={def.width * PIXELS_PER_FOOT / 2}
+            y={0}
+            innerRadius={def.width * PIXELS_PER_FOOT / 2}
+            outerRadius={def.width * PIXELS_PER_FOOT / 2}
+            angle={90}
+            rotation={-180}
             stroke="#1e293b"
             strokeWidth={1 / zoom}
             dash={[2, 2]}
@@ -2325,7 +2473,10 @@ function LabelOnCanvas({
       rotation={label.rotation || 0}
       draggable={isMoveMode}
       onDragEnd={onDragEnd}
-      onClick={onSelect}
+      onClick={(e) => {
+        if (mode === 'measure-line' || mode === 'measure-rect') return;
+        onSelect();
+      }}
       onDblClick={onRotate}
     >
       <Text
@@ -2363,15 +2514,15 @@ function LabelOnCanvas({
   );
 }
 
-function WallMeasurements({ wall, room, zoom }: { wall: { start: Point, end: Point }, room: Room, zoom: number }) {
+function WallMeasurements({ wall, room, zoom, isPrinting }: { wall: { start: Point, end: Point }, room: Room, zoom: number, isPrinting?: boolean }) {
   const intersections = useMemo(() => {
     const pts: Point[] = [];
     
     // Boundary segments
     room.points.forEach((p, i) => {
       const next = room.points[(i + 1) % room.points.length];
-      if ((p.x === wall.start.x && p.y === wall.start.y && next.x === wall.end.x && next.y === wall.end.y) ||
-          (p.x === wall.end.x && p.y === wall.end.y && next.x === wall.start.x && next.y === wall.start.y)) {
+      if ((Math.abs(p.x - wall.start.x) < 0.01 && Math.abs(p.y - wall.start.y) < 0.01 && Math.abs(next.x - wall.end.x) < 0.01 && Math.abs(next.y - wall.end.y) < 0.01) ||
+          (Math.abs(p.x - wall.end.x) < 0.01 && Math.abs(p.y - wall.end.y) < 0.01 && Math.abs(next.x - wall.start.x) < 0.01 && Math.abs(next.y - wall.start.y) < 0.01)) {
         return;
       }
       const intersect = getLineIntersection(wall.start, wall.end, p, next);
@@ -2384,8 +2535,8 @@ function WallMeasurements({ wall, room, zoom }: { wall: { start: Point, end: Poi
 
     // Temp walls
     room.tempWalls.forEach(tw => {
-      if ((tw.start.x === wall.start.x && tw.start.y === wall.start.y && tw.end.x === wall.end.x && tw.end.y === wall.end.y) ||
-          (tw.start.x === wall.end.x && tw.start.y === wall.end.y && tw.end.x === wall.start.x && tw.end.y === wall.start.y)) {
+      if ((Math.abs(tw.start.x - wall.start.x) < 0.01 && Math.abs(tw.start.y - wall.start.y) < 0.01 && Math.abs(tw.end.x - wall.end.x) < 0.01 && Math.abs(tw.end.y - wall.end.y) < 0.01) ||
+          (Math.abs(tw.start.x - wall.end.x) < 0.01 && Math.abs(tw.start.y - wall.end.y) < 0.01 && Math.abs(tw.end.x - wall.start.x) < 0.01 && Math.abs(tw.end.y - wall.start.y) < 0.01)) {
         return;
       }
       const intersect = getLineIntersection(wall.start, wall.end, tw.start, tw.end);
@@ -2404,8 +2555,32 @@ function WallMeasurements({ wall, room, zoom }: { wall: { start: Point, end: Poi
     });
   }, [wall, room]);
 
+  const isClockwise = useMemo(() => {
+    let sum = 0;
+    for (let i = 0; i < room.points.length; i++) {
+      const p1 = room.points[i];
+      const p2 = room.points[(i + 1) % room.points.length];
+      sum += (p2.x - p1.x) * (p2.y + p1.y);
+    }
+    return sum > 0;
+  }, [room.points]);
+
+  const isRoomBoundary = useMemo(() => {
+    return room.points.some((p, i) => {
+      const next = room.points[(i + 1) % room.points.length];
+      return (Math.abs(p.x - wall.start.x) < 0.01 && Math.abs(p.y - wall.start.y) < 0.01 && 
+              Math.abs(next.x - wall.end.x) < 0.01 && Math.abs(next.y - wall.end.y) < 0.01) ||
+             (Math.abs(p.x - wall.end.x) < 0.01 && Math.abs(p.y - wall.end.y) < 0.01 && 
+              Math.abs(next.x - wall.start.x) < 0.01 && Math.abs(next.y - wall.start.y) < 0.01);
+    });
+  }, [room.points, wall]);
+
   const fullLength = Math.sqrt(Math.pow(wall.end.x - wall.start.x, 2) + Math.pow(wall.end.y - wall.start.y, 2));
   const angle = Math.atan2(wall.end.y - wall.start.y, wall.end.x - wall.start.x) * 180 / Math.PI;
+
+  // Determine offset direction for room boundaries to be "outside"
+  // For CW, positive Y is outside. For CCW, negative Y is outside.
+  const yOffset = isRoomBoundary ? (isClockwise ? 40 : -40) : -40;
 
   const segments = useMemo(() => {
     const points = [
@@ -2439,12 +2614,13 @@ function WallMeasurements({ wall, room, zoom }: { wall: { start: Point, end: Poi
       <Text
         text={formatFeetInches(fullLength)}
         x={fullLength * PIXELS_PER_FOOT / 2}
-        y={-25 / zoom}
-        fontSize={16 / zoom}
-        fill="#4f46e5"
+        y={yOffset}
+        fontSize={isPrinting ? 18 : 20}
+        fill={isPrinting ? "#1e293b" : "#4f46e5"}
+        fontStyle="bold"
         fontFamily="JetBrains Mono"
         align="center"
-        offsetX={(formatFeetInches(fullLength).length * 16 / zoom * 0.6) / 2}
+        offsetX={(formatFeetInches(fullLength).length * (isPrinting ? 18 : 20) * 0.6) / 2}
       />
 
       {/* Segment Lengths */}
@@ -2453,12 +2629,12 @@ function WallMeasurements({ wall, room, zoom }: { wall: { start: Point, end: Poi
           key={`seg-${idx}`}
           text={formatFeetInches(seg.length)}
           x={(seg.start + seg.end) * PIXELS_PER_FOOT / 2}
-          y={20 / zoom}
-          fontSize={14 / zoom}
-          fill="#4f46e5"
+          y={yOffset > 0 ? yOffset + 25 : yOffset - 25}
+          fontSize={isPrinting ? 14 : 16}
+          fill={isPrinting ? "#64748b" : "#4f46e5"}
           fontFamily="JetBrains Mono"
           align="center"
-          offsetX={(formatFeetInches(seg.length).length * 14 / zoom * 0.6) / 2}
+          offsetX={(formatFeetInches(seg.length).length * (isPrinting ? 14 : 16) * 0.6) / 2}
         />
       ))}
 
@@ -2513,6 +2689,7 @@ function WallOnCanvas({
       onMouseEnter={onHover}
       onMouseLeave={onUnhover}
       onClick={(e) => {
+        if (mode === 'measure-line' || mode === 'measure-rect') return;
         e.cancelBubble = true;
         onSelect?.();
       }}
