@@ -47,6 +47,7 @@ export interface RoomLabel {
   text: string;
   x: number;
   y: number;
+  width?: number;
   fontSize: number;
   rotation?: number;
   fontWeight?: string;

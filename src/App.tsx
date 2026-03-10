@@ -8,7 +8,8 @@ import {
   calculatePolygonArea,
   PlacedObject,
   TempWall,
-  Point
+  Point,
+  RoomLabel
 } from './utils';
 import { 
   Plus, 
@@ -140,6 +141,8 @@ export default function App() {
   const [showBulkInput, setShowBulkInput] = useState(false);
   const [bulkInputText, setBulkInputText] = useState("");
   const [showTextInput, setShowTextInput] = useState(false);
+  const [editingLabelId, setEditingLabelId] = useState<string | null>(null);
+  const [drawingLabelStart, setDrawingLabelStart] = useState<Point | null>(null);
   const [pendingTextPos, setPendingTextPos] = useState<Point | null>(null);
   const [newText, setNewText] = useState("");
   const [isNamesLocked, setIsNamesLocked] = useState(true);
@@ -644,32 +647,7 @@ export default function App() {
         }
         setTempWallStart(null);
       }
-    } else if (mode === 'add-text') {
-      setPendingTextPos({ x: gridX, y: gridY });
-      setShowTextInput(true);
     }
-  };
-
-  const handleAddText = () => {
-    if (!activeRoom || !pendingTextPos || !newText.trim()) return;
-    
-    const label = {
-      id: Math.random().toString(36).substr(2, 9),
-      text: newText,
-      x: pendingTextPos.x,
-      y: pendingTextPos.y,
-      fontSize: 1 // 1 foot base size
-    };
-
-    setRooms(rooms.map(r => r.id === activeRoomId ? { 
-      ...r, 
-      labels: [...(r.labels || []), label] 
-    } : r));
-    
-    setNewText("");
-    setShowTextInput(false);
-    setPendingTextPos(null);
-    setMode('select');
   };
 
   const handleManualAddItem = () => {
@@ -715,6 +693,11 @@ export default function App() {
         setSelectedObjectIds([]);
         setSelectedLabelIds([]);
       }
+    } else if (mode === 'add-text') {
+      const stage = e.target.getStage();
+      const pointer = stage.getRelativePointerPosition();
+      const pos = { x: pointer.x / PIXELS_PER_FOOT, y: pointer.y / PIXELS_PER_FOOT };
+      setDrawingLabelStart(pos);
     }
   };
 
@@ -764,6 +747,39 @@ export default function App() {
       setSelectedLabelIds(selectedLabels);
       setSelectionStart(null);
       setSelectionEnd(null);
+    }
+
+    if (mode === 'add-text' && drawingLabelStart) {
+      const stage = e.target.getStage();
+      const pointer = stage.getRelativePointerPosition();
+      const pos = { x: pointer.x / PIXELS_PER_FOOT, y: pointer.y / PIXELS_PER_FOOT };
+      
+      const width = Math.max(1, Math.abs(pos.x - drawingLabelStart.x));
+      const x = Math.min(pos.x, drawingLabelStart.x);
+      const y = Math.min(pos.y, drawingLabelStart.y);
+
+      const newLabelId = Math.random().toString(36).substr(2, 9);
+      const label = {
+        id: newLabelId,
+        text: "",
+        x: x,
+        y: y,
+        width: width,
+        fontSize: 1,
+        rotation: 0
+      };
+
+      if (activeRoomId) {
+        setRooms(rooms.map(r => r.id === activeRoomId ? { 
+          ...r, 
+          labels: [...(r.labels || []), label] 
+        } : r));
+        setSelectedLabelId(newLabelId);
+        setEditingLabelId(newLabelId);
+      }
+
+      setDrawingLabelStart(null);
+      setMode('select');
     }
   };
 
@@ -1677,45 +1693,8 @@ export default function App() {
           )}
         </div>
 
-        {/* Text Input Modal */}
+        {/* Text Input Modal - Removed in favor of direct editing */}
         <AnimatePresence>
-          {showTextInput && (
-            <motion.div 
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              className="absolute inset-0 z-50 flex items-center justify-center bg-zinc-900/60 backdrop-blur-sm p-4"
-            >
-              <motion.div 
-                initial={{ scale: 0.9, y: 20 }}
-                animate={{ scale: 1, y: 0 }}
-                className="bg-white rounded-3xl shadow-2xl w-full max-w-sm overflow-hidden flex flex-col"
-              >
-                <div className="p-6 border-b border-zinc-100 flex items-center justify-between">
-                  <h3 className="text-lg font-bold">Add Label</h3>
-                  <button onClick={() => setShowTextInput(false)} className="p-2 hover:bg-zinc-100 rounded-full">
-                    <ChevronLeft className="w-5 h-5 rotate-90" />
-                  </button>
-                </div>
-                <div className="p-6 space-y-4">
-                  <input 
-                    autoFocus
-                    className="w-full p-4 bg-zinc-50 border border-zinc-200 rounded-2xl text-sm focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none"
-                    placeholder="Enter text..."
-                    value={newText}
-                    onChange={(e) => setNewText(e.target.value)}
-                    onKeyDown={(e) => e.key === 'Enter' && handleAddText()}
-                  />
-                  <button 
-                    onClick={handleAddText}
-                    className="w-full py-3 bg-indigo-600 text-white text-xs font-bold rounded-xl hover:bg-indigo-700 transition-all shadow-lg shadow-indigo-200"
-                  >
-                    Add Text
-                  </button>
-                </div>
-              </motion.div>
-            </motion.div>
-          )}
         </AnimatePresence>
         <AnimatePresence>
           {showBulkInput && (
@@ -2171,10 +2150,77 @@ export default function App() {
                       labels: r.labels?.map(l => l.id === label.id ? { ...l, x: newX, y: newY } : l)
                     } : r));
                   }}
+                  onDoubleClick={() => setEditingLabelId(label.id)}
                 />
               ))}
             </Layer>
           </Stage>
+
+          {/* Drawing Text Box Preview */}
+          {mode === 'add-text' && drawingLabelStart && (
+            <div 
+              className="absolute border border-indigo-500 bg-indigo-500/10 pointer-events-none"
+              style={{
+                left: Math.min(drawingLabelStart.x, mousePos.x) * PIXELS_PER_FOOT * zoom + stagePos.x,
+                top: Math.min(drawingLabelStart.y, mousePos.y) * PIXELS_PER_FOOT * zoom + stagePos.y,
+                width: Math.abs(mousePos.x - drawingLabelStart.x) * PIXELS_PER_FOOT * zoom,
+                height: Math.abs(mousePos.y - drawingLabelStart.y) * PIXELS_PER_FOOT * zoom,
+              }}
+            />
+          )}
+
+          {/* Text Editing Overlay */}
+          {editingLabelId && activeRoom && (() => {
+            const label = activeRoom.labels?.find(l => l.id === editingLabelId);
+            if (!label) return null;
+            
+            const screenX = label.x * PIXELS_PER_FOOT * zoom + stagePos.x;
+            const screenY = label.y * PIXELS_PER_FOOT * zoom + stagePos.y;
+            const screenW = (label.width || 5) * PIXELS_PER_FOOT * zoom;
+            
+            return (
+              <textarea
+                autoFocus
+                onFocus={(e) => {
+                  e.target.style.height = 'auto';
+                  e.target.style.height = e.target.scrollHeight + 'px';
+                }}
+                className="absolute bg-white/50 border-none p-0 outline-none resize-none overflow-hidden z-20 focus:bg-white/80 transition-colors"
+                style={{
+                  left: screenX,
+                  top: screenY,
+                  width: screenW,
+                  minHeight: label.fontSize * PIXELS_PER_FOOT * zoom * 1.2,
+                  fontSize: label.fontSize * PIXELS_PER_FOOT * zoom,
+                  fontFamily: 'JetBrains Mono',
+                  transformOrigin: 'top left',
+                  transform: `rotate(${label.rotation || 0}deg)`,
+                  lineHeight: 1.2
+                }}
+                value={label.text}
+                onChange={(e) => {
+                  setRooms(rooms.map(r => r.id === activeRoomId ? {
+                    ...r,
+                    labels: r.labels?.map(l => l.id === editingLabelId ? { ...l, text: e.target.value } : l)
+                  } : r));
+                  
+                  // Auto-resize height
+                  e.target.style.height = 'auto';
+                  e.target.style.height = e.target.scrollHeight + 'px';
+                }}
+                onBlur={() => {
+                  if (!label.text.trim()) {
+                    // Delete if empty
+                    setRooms(rooms.map(r => r.id === activeRoomId ? {
+                      ...r,
+                      labels: r.labels?.filter(l => l.id !== editingLabelId)
+                    } : r));
+                  }
+                  setEditingLabelId(null);
+                }}
+              />
+            );
+          })()}
         </div>
 
         {/* Footer Info */}
@@ -2453,16 +2499,18 @@ function LabelOnCanvas({
   onSelect,
   onDelete,
   onRotate,
-  onDragEnd
+  onDragEnd,
+  onDoubleClick
 }: {
-  label: any,
+  label: RoomLabel,
   zoom: number,
   mode: string,
   isSelected: boolean,
   onSelect: () => void,
   onDelete: () => void,
   onRotate: () => void,
-  onDragEnd: (e: any) => void
+  onDragEnd: (e: any) => void,
+  onDoubleClick: () => void
 }) {
   const isMoveMode = mode === 'move';
   
@@ -2477,33 +2525,33 @@ function LabelOnCanvas({
         if (mode === 'measure-line' || mode === 'measure-rect') return;
         onSelect();
       }}
-      onDblClick={onRotate}
+      onDblClick={onDoubleClick}
     >
       <Text
-        text={label.text}
+        text={label.text || (isSelected ? "Type here..." : "")}
         fontSize={label.fontSize * PIXELS_PER_FOOT}
-        fill={label.color || "#1e293b"}
+        fill={label.text ? (label.color || "#1e293b") : "#94a3b8"}
         fontStyle={label.fontWeight === 'bold' ? 'bold' : 'normal'}
         fontFamily="JetBrains Mono"
-        align="center"
-        verticalAlign="middle"
+        align="left"
+        verticalAlign="top"
+        width={label.width ? label.width * PIXELS_PER_FOOT : undefined}
+        wrap="word"
         shadowBlur={isSelected ? 5 : 0}
         shadowColor="#4f46e5"
-        offsetX={(label.text.length * label.fontSize * PIXELS_PER_FOOT * 0.6) / 2}
-        offsetY={(label.fontSize * PIXELS_PER_FOOT) / 2}
       />
       {isSelected && (
-        <Group>
+        <Group x={(label.width || 5) * PIXELS_PER_FOOT / 2}>
           <Circle 
-            x={0} 
-            y={-(label.fontSize * PIXELS_PER_FOOT) - 10 / zoom} 
+            x={-10 / zoom} 
+            y={-10 / zoom} 
             radius={6 / zoom} 
             fill="#ef4444" 
             onClick={onDelete}
           />
           <Circle 
-            x={0} 
-            y={(label.fontSize * PIXELS_PER_FOOT) + 10 / zoom} 
+            x={10 / zoom} 
+            y={-10 / zoom} 
             radius={6 / zoom} 
             fill="#4f46e5" 
             onClick={onRotate}
