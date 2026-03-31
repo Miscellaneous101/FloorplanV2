@@ -41,7 +41,8 @@ import {
   Type,
   Printer,
   Edit3,
-  DoorOpen
+  DoorOpen,
+  Zap
 } from 'lucide-react';
 import { Stage, Layer, Line, Rect, Circle, Group, Text, Arc } from 'react-konva';
 import Papa from 'papaparse';
@@ -174,7 +175,7 @@ export default function App() {
       }
     }
 
-    // Ensure default door is in library
+    // Ensure default door and outlet are in library
     const hasDoor = initialLibrary.some(obj => obj.type === 'door');
     if (!hasDoor) {
       initialLibrary.push({
@@ -183,6 +184,17 @@ export default function App() {
         width: 6,
         length: 3,
         type: 'door'
+      });
+    }
+
+    const hasOutlet = initialLibrary.some(obj => obj.type === 'outlet');
+    if (!hasOutlet) {
+      initialLibrary.push({
+        id: 'default-outlet',
+        name: 'Wall Outlet',
+        width: 1,
+        length: 0.5,
+        type: 'outlet'
       });
     }
 
@@ -472,12 +484,28 @@ export default function App() {
 
         if (importedData.room && importedData.library) {
           roomToImport = importedData.room;
-          // Merge libraries
+          // Merge libraries and transform single doors to double doors
+          const transformedLibrary = importedData.library.map((def: ObjectDefinition) => {
+            if (def.type === 'door' && (def.name.toLowerCase().includes('single') || def.width < 4)) {
+              return {
+                ...def,
+                name: 'Double Door',
+                width: 6,
+                length: 3
+              };
+            }
+            return def;
+          });
+
           setObjectLibrary(prev => {
             const newLibrary = [...prev];
-            importedData.library.forEach((newDef: ObjectDefinition) => {
+            transformedLibrary.forEach((newDef: ObjectDefinition) => {
               if (!newLibrary.some(d => d.id === newDef.id)) {
                 newLibrary.push(newDef);
+              } else {
+                // Update existing if it was transformed
+                const idx = newLibrary.findIndex(d => d.id === newDef.id);
+                newLibrary[idx] = newDef;
               }
             });
             return newLibrary;
@@ -1336,6 +1364,7 @@ export default function App() {
                       <div className="flex justify-between items-start mb-1">
                         <div className="flex items-center gap-2 flex-1">
                           {obj.type === 'door' && <DoorOpen className="w-4 h-4 text-indigo-500" />}
+                          {obj.type === 'outlet' && <Zap className="w-4 h-4 text-yellow-500" />}
                           <input 
                             className={cn(
                               "bg-transparent border-none focus:ring-0 p-0 text-sm font-semibold text-zinc-800 w-full",
@@ -2312,8 +2341,9 @@ function ObjectOnCanvas({
   isValid: boolean
 }) {
   const [isHovered, setIsHovered] = useState(false);
-  const isMoveMode = mode === 'move' || (mode === 'multi-select' && isMultiSelected);
+  const isMoveMode = mode === 'move' || (mode === 'select' && isSelected) || (mode === 'multi-select' && isMultiSelected);
   const isDoor = def.type === 'door';
+  const isOutlet = def.type === 'outlet';
   const isRotated = obj.rotation === 90 || obj.rotation === 270;
   const currentW = isRotated ? def.length : def.width;
   const currentH = isRotated ? def.width : def.length;
@@ -2403,6 +2433,31 @@ function ObjectOnCanvas({
               dash={[5, 5]}
             />
           )}
+        </Group>
+      ) : isOutlet ? (
+        <Group>
+          <Rect
+            x={-def.width * PIXELS_PER_FOOT / 2}
+            y={-def.length * PIXELS_PER_FOOT / 2}
+            width={def.width * PIXELS_PER_FOOT}
+            height={def.length * PIXELS_PER_FOOT}
+            fill="#facc15"
+            stroke="#854d0e"
+            strokeWidth={1 / zoom}
+            cornerRadius={2 / zoom}
+          />
+          <Circle
+            x={-def.width * PIXELS_PER_FOOT / 4}
+            y={0}
+            radius={def.length * PIXELS_PER_FOOT / 4}
+            fill="#854d0e"
+          />
+          <Circle
+            x={def.width * PIXELS_PER_FOOT / 4}
+            y={0}
+            radius={def.length * PIXELS_PER_FOOT / 4}
+            fill="#854d0e"
+          />
         </Group>
       ) : (
         <Rect

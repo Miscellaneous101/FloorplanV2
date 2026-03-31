@@ -20,7 +20,7 @@ export interface ObjectDefinition {
   name: string;
   width: number; // in decimal feet
   length: number; // in decimal feet
-  type?: 'standard' | 'door';
+  type?: 'standard' | 'door' | 'outlet';
 }
 
 export interface PlacedObject {
