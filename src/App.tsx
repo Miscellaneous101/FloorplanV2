@@ -175,13 +175,24 @@ export default function App() {
       }
     }
 
-    // Ensure default door and outlet are in library
-    const hasDoor = initialLibrary.some(obj => obj.type === 'door');
-    if (!hasDoor) {
+    // Ensure default doors and outlet are in library
+    const hasDoubleDoor = initialLibrary.some(obj => obj.id === 'default-door');
+    if (!hasDoubleDoor) {
       initialLibrary.push({
         id: 'default-door',
         name: 'Double Door',
         width: 6,
+        length: 3,
+        type: 'door'
+      });
+    }
+
+    const hasSingleDoor = initialLibrary.some(obj => obj.id === 'standard-door');
+    if (!hasSingleDoor) {
+      initialLibrary.push({
+        id: 'standard-door',
+        name: 'Standard Door',
+        width: 3,
         length: 3,
         type: 'door'
       });
@@ -484,28 +495,12 @@ export default function App() {
 
         if (importedData.room && importedData.library) {
           roomToImport = importedData.room;
-          // Merge libraries and transform single doors to double doors
-          const transformedLibrary = importedData.library.map((def: ObjectDefinition) => {
-            if (def.type === 'door' && (def.name.toLowerCase().includes('single') || def.width < 4)) {
-              return {
-                ...def,
-                name: 'Double Door',
-                width: 6,
-                length: 3
-              };
-            }
-            return def;
-          });
-
+          // Merge libraries
           setObjectLibrary(prev => {
             const newLibrary = [...prev];
-            transformedLibrary.forEach((newDef: ObjectDefinition) => {
+            importedData.library.forEach((newDef: ObjectDefinition) => {
               if (!newLibrary.some(d => d.id === newDef.id)) {
                 newLibrary.push(newDef);
-              } else {
-                // Update existing if it was transformed
-                const idx = newLibrary.findIndex(d => d.id === newDef.id);
-                newLibrary[idx] = newDef;
               }
             });
             return newLibrary;
@@ -2385,42 +2380,67 @@ function ObjectOnCanvas({
             stroke="#1e293b"
             strokeWidth={4 / zoom}
           />
-          {/* Left Door Leaf */}
-          <Line
-            points={[-def.width * PIXELS_PER_FOOT / 2, 0, -def.width * PIXELS_PER_FOOT / 2, -def.length * PIXELS_PER_FOOT]}
-            stroke="#1e293b"
-            strokeWidth={2 / zoom}
-          />
-          {/* Right Door Leaf */}
-          <Line
-            points={[def.width * PIXELS_PER_FOOT / 2, 0, def.width * PIXELS_PER_FOOT / 2, -def.length * PIXELS_PER_FOOT]}
-            stroke="#1e293b"
-            strokeWidth={2 / zoom}
-          />
-          {/* Left Swing Arc */}
-          <Arc
-            x={-def.width * PIXELS_PER_FOOT / 2}
-            y={0}
-            innerRadius={def.width * PIXELS_PER_FOOT / 2}
-            outerRadius={def.width * PIXELS_PER_FOOT / 2}
-            angle={90}
-            rotation={-90}
-            stroke="#1e293b"
-            strokeWidth={1 / zoom}
-            dash={[2, 2]}
-          />
-          {/* Right Swing Arc */}
-          <Arc
-            x={def.width * PIXELS_PER_FOOT / 2}
-            y={0}
-            innerRadius={def.width * PIXELS_PER_FOOT / 2}
-            outerRadius={def.width * PIXELS_PER_FOOT / 2}
-            angle={90}
-            rotation={-180}
-            stroke="#1e293b"
-            strokeWidth={1 / zoom}
-            dash={[2, 2]}
-          />
+          {def.width >= 4 ? (
+            <>
+              {/* Double Door */}
+              {/* Left Door Leaf */}
+              <Line
+                points={[-def.width * PIXELS_PER_FOOT / 2, 0, -def.width * PIXELS_PER_FOOT / 2, -def.length * PIXELS_PER_FOOT]}
+                stroke="#1e293b"
+                strokeWidth={2 / zoom}
+              />
+              {/* Right Door Leaf */}
+              <Line
+                points={[def.width * PIXELS_PER_FOOT / 2, 0, def.width * PIXELS_PER_FOOT / 2, -def.length * PIXELS_PER_FOOT]}
+                stroke="#1e293b"
+                strokeWidth={2 / zoom}
+              />
+              {/* Left Swing Arc */}
+              <Arc
+                x={-def.width * PIXELS_PER_FOOT / 2}
+                y={0}
+                innerRadius={def.width * PIXELS_PER_FOOT / 2}
+                outerRadius={def.width * PIXELS_PER_FOOT / 2}
+                angle={90}
+                rotation={-90}
+                stroke="#1e293b"
+                strokeWidth={1 / zoom}
+                dash={[2, 2]}
+              />
+              {/* Right Swing Arc */}
+              <Arc
+                x={def.width * PIXELS_PER_FOOT / 2}
+                y={0}
+                innerRadius={def.width * PIXELS_PER_FOOT / 2}
+                outerRadius={def.width * PIXELS_PER_FOOT / 2}
+                angle={90}
+                rotation={-180}
+                stroke="#1e293b"
+                strokeWidth={1 / zoom}
+                dash={[2, 2]}
+              />
+            </>
+          ) : (
+            <>
+              {/* Single Door */}
+              <Line
+                points={[-def.width * PIXELS_PER_FOOT / 2, 0, -def.width * PIXELS_PER_FOOT / 2, -def.width * PIXELS_PER_FOOT]}
+                stroke="#1e293b"
+                strokeWidth={2 / zoom}
+              />
+              <Arc
+                x={-def.width * PIXELS_PER_FOOT / 2}
+                y={0}
+                innerRadius={def.width * PIXELS_PER_FOOT}
+                outerRadius={def.width * PIXELS_PER_FOOT}
+                angle={90}
+                rotation={-90}
+                stroke="#1e293b"
+                strokeWidth={1 / zoom}
+                dash={[2, 2]}
+              />
+            </>
+          )}
           {/* Selection highlight for door */}
           {isSelected && (
             <Rect
