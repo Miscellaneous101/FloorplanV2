@@ -175,9 +175,9 @@ export default function App() {
       }
     }
 
-    // Ensure default doors and outlet are in library
-    const hasDoubleDoor = initialLibrary.some(obj => obj.id === 'default-door');
-    if (!hasDoubleDoor) {
+    // Ensure default doors and outlet are in library and have correct properties (heal corrupted data)
+    let doubleDoor = initialLibrary.find(obj => obj.id === 'default-door');
+    if (!doubleDoor) {
       initialLibrary.push({
         id: 'default-door',
         name: 'Double Door',
@@ -185,10 +185,16 @@ export default function App() {
         length: 3,
         type: 'door'
       });
+    } else {
+      // Heal if corrupted
+      doubleDoor.name = 'Double Door';
+      doubleDoor.width = 6;
+      doubleDoor.length = 3;
+      doubleDoor.type = 'door';
     }
 
-    const hasSingleDoor = initialLibrary.some(obj => obj.id === 'standard-door');
-    if (!hasSingleDoor) {
+    let singleDoor = initialLibrary.find(obj => obj.id === 'standard-door');
+    if (!singleDoor) {
       initialLibrary.push({
         id: 'standard-door',
         name: 'Standard Door',
@@ -196,10 +202,16 @@ export default function App() {
         length: 3,
         type: 'door'
       });
+    } else {
+      // Heal if corrupted
+      singleDoor.name = 'Standard Door';
+      singleDoor.width = 3;
+      singleDoor.length = 3;
+      singleDoor.type = 'door';
     }
 
-    const hasOutlet = initialLibrary.some(obj => obj.type === 'outlet');
-    if (!hasOutlet) {
+    let outlet = initialLibrary.find(obj => obj.id === 'default-outlet');
+    if (!outlet) {
       initialLibrary.push({
         id: 'default-outlet',
         name: 'Wall Outlet',
@@ -207,6 +219,11 @@ export default function App() {
         length: 0.5,
         type: 'outlet'
       });
+    } else {
+      outlet.name = 'Wall Outlet';
+      outlet.width = 1;
+      outlet.length = 0.5;
+      outlet.type = 'outlet';
     }
 
     setRoomsState(initialRooms);
