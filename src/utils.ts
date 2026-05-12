@@ -38,6 +38,7 @@ export interface TempWall {
   id: string;
   start: Point; // in decimal feet
   end: Point; // in decimal feet
+  thickness?: number; // in inches
   color?: string;
   isDashed?: boolean;
 }

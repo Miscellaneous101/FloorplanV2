@@ -114,6 +114,7 @@ export default function App() {
   const [wallOrientation, setWallOrientation] = useState<'h' | 'v'>('h');
   const [wallColor, setWallColor] = useState('#4f46e5');
   const [wallStyle, setWallStyle] = useState<'solid' | 'dotted'>('solid');
+  const [wallThickness, setWallThickness] = useState<string>("4");
   const [showColorPicker, setShowColorPicker] = useState(false);
 
   const WALL_COLORS = [
@@ -679,6 +680,7 @@ export default function App() {
           id: Math.random().toString(36).substr(2, 9),
           start: tempWallStart,
           end: { x: gridX, y: gridY },
+          thickness: parseFloat(wallThickness) || 4,
           color: wallColor,
           isDashed: wallStyle === 'dotted'
         };
@@ -1588,6 +1590,22 @@ export default function App() {
 
             <div className="w-px h-6 bg-zinc-200 mx-1" />
 
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-zinc-400 uppercase font-bold">Thickness</span>
+              <div className="flex items-center bg-zinc-100 rounded-lg p-1">
+                <input 
+                  type="number" 
+                  value={wallThickness}
+                  onChange={(e) => setWallThickness(e.target.value)}
+                  className="w-10 bg-transparent border-none focus:ring-0 text-xs font-mono text-center"
+                  placeholder="in"
+                />
+                <span className="text-[10px] text-zinc-400 pr-1">in</span>
+              </div>
+            </div>
+
+            <div className="w-px h-6 bg-zinc-200 mx-1" />
+
             {/* Color Picker */}
             <div className="relative">
               <button
@@ -1995,7 +2013,8 @@ export default function App() {
                     Math.abs(mousePos.x - tempWallStart.x) > Math.abs(mousePos.y - tempWallStart.y) ? tempWallStart.y * PIXELS_PER_FOOT : mousePos.y * PIXELS_PER_FOOT
                   ]}
                   stroke="#94a3b8"
-                  strokeWidth={2 / zoom}
+                  strokeWidth={(parseFloat(wallThickness) || 4) / 12 * PIXELS_PER_FOOT}
+                  opacity={0.5}
                   dash={[10, 5]}
                 />
               )}
@@ -2516,12 +2535,12 @@ function ObjectOnCanvas({
       {!isDoor && (
         <Group rotation={-obj.rotation}>
           <Text
-            text={def.name}
+            text={!isOutlet ? `${def.name}\n${formatFeetInches(def.length)} × ${formatFeetInches(def.width)}` : def.name}
             x={-currentW * PIXELS_PER_FOOT / 2}
             y={-currentH * PIXELS_PER_FOOT / 2}
             width={currentW * PIXELS_PER_FOOT}
             height={currentH * PIXELS_PER_FOOT}
-            fontSize={(obj.fontSize || 1) * Math.min(16, (currentW * PIXELS_PER_FOOT) / 3, (currentH * PIXELS_PER_FOOT) / 3)}
+            fontSize={(obj.fontSize || 1) * Math.min(14, (currentW * PIXELS_PER_FOOT) / 4, (currentH * PIXELS_PER_FOOT) / 4)}
             fill={obj.color || (isValid ? "#64748b" : "#ef4444")}
             fontStyle={obj.fontWeight === 'bold' ? 'bold' : 'normal'}
             fontFamily="JetBrains Mono"
@@ -2530,6 +2549,7 @@ function ObjectOnCanvas({
             wrap="char"
             ellipsis={true}
             listening={false}
+            lineHeight={1.2}
           />
         </Group>
       )}
@@ -2837,8 +2857,8 @@ function WallOnCanvas({
       <Line
         points={[0, 0, dx, dy]}
         stroke={isSelected ? "#4f46e5" : (wall.color || "#64748b")}
-        strokeWidth={(isSelected ? 6 : 4) / zoom}
-        hitStrokeWidth={20 / zoom}
+        strokeWidth={((wall.thickness || 4) / 12 * PIXELS_PER_FOOT) / (isSelected ? 0.8 : 1)}
+        hitStrokeWidth={Math.max(20 / zoom, (wall.thickness || 4) / 12 * PIXELS_PER_FOOT)}
         dash={wall.isDashed ? [5, 5] : undefined}
         shadowBlur={isSelected ? 10 : 0}
         shadowColor="#4f46e5"
